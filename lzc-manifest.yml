@@ -1,0 +1,97 @@
+application:
+  subdomain: mathesar
+  multi_instance: false
+  # Mathesar ships its own account system: the first visit opens an installer
+  # that creates the admin account. Exposed directly so that installer and the
+  # login page are reachable without a second platform login gate in front.
+  public_path:
+    - /
+  upstreams:
+    - location: /package-licenses/
+      backend: file:///lzcapp/pkg/content/licenses/
+    - location: /
+      backend: http://caddy:80/
+
+services:
+  mathesar_service:
+    # upstream: mathesar/mathesar:0.12.0
+    image: docker.1ms.run/mathesar/mathesar:0.12.0
+    depends_on:
+      - db
+    environment:
+      - ALLOWED_HOSTS=*
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DEBUG=false
+      - POSTGRES_DB=mathesar_django
+      - POSTGRES_USER=mathesar
+      - |-
+        POSTGRES_PASSWORD={{ stable_secret "mathesar_db_password" | replace "\r" "" | replace "\n" "" }}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - |-
+        SECRET_KEY={{ printf "%x" (stable_secret "mathesar_secret_key") }}
+      - WEB_CONCURRENCY=3
+      - TZ=Asia/Shanghai
+    binds:
+      - /lzcapp/var/static:/code/static
+      - /lzcapp/var/media:/code/.media
+      - /lzcapp/var/secrets:/code/.secrets
+
+  db:
+    image: docker.1ms.run/library/postgres:17.11
+    environment:
+      - POSTGRES_DB=mathesar_django
+      - POSTGRES_USER=mathesar
+      - |-
+        POSTGRES_PASSWORD={{ stable_secret "mathesar_db_password" | replace "\r" "" | replace "\n" "" }}
+      - TZ=Asia/Shanghai
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U mathesar -d mathesar_django
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    binds:
+      - /lzcapp/var/pgdata:/var/lib/postgresql/data
+
+  caddy:
+    # upstream: mathesar/mathesar-caddy:0.12.0
+    image: docker.1ms.run/mathesar/mathesar-caddy:0.12.0
+    depends_on:
+      - mathesar_service
+    environment:
+      - DOMAIN_NAME=:80
+      - MEDIA_ROOT=/code/.media/
+      - STATIC_ROOT=/code/static/
+      - TZ=Asia/Shanghai
+    expose:
+      - "80"
+    binds:
+      - /lzcapp/var/static:/code/static
+      - /lzcapp/var/media:/code/.media
+      - /lzcapp/var/caddy:/data
+
+usage: |
+  Mathesar 是给 PostgreSQL 用的电子表格式数据库界面：直接建表、改字段、导入 CSV、
+  做筛选排序和视图，不用写 SQL。
+
+  使用方法：
+  1. 打开应用，第一次会进入安装向导，填用户名和密码创建管理员账号
+     （在应用内部完成，不需要邮件验证）。
+  2. 登录后先连一个数据库：可以直接用内置的 PostgreSQL，也可以填你自己的库地址。
+  3. 之后就能在表格视图里建表、导入数据、做筛选和分组。
+
+  数据与安全：
+  - 数据库文件在 /lzcapp/var/pgdata，上传的 CSV 等附件在 /lzcapp/var/media，
+    都随应用持久化；卸载应用会一并删除，重要数据请自行备份。
+  - 数据库密码与 Django SECRET_KEY 随包固定生成，容器重建不会把已登录用户踢下线。
+  - 应用直接对外开放，由 Mathesar 自己的安装向导/登录页鉴权：
+    自带账号体系的服务再套一层平台鉴权会造成重复登录，所以用 public_path。
+
+  说明：
+  - 三个容器：应用本体、内置 PostgreSQL 17、以及前置的 Caddy
+    （Caddy 负责转发请求，并直接提供静态文件与上传的附件）。
+  - 未做真机验证：安装向导建号、导入 CSV、连接外部数据库以及重启后数据持久化
+    均未在设备上实测。
