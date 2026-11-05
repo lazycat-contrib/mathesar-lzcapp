@@ -1,6 +1,6 @@
 package: community.lazycat.app.mathesar
 name: Mathesar
-version: 1.0.0
+version: 0.0.0
 description: "Spreadsheet-like interface on top of PostgreSQL: edit tables, import CSV, build views."
 min_os_version: "1.5.0"
 homepage: https://mathesar.org/
